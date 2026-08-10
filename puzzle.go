@@ -1,4 +1,4 @@
-package main
+package mini
 
 import (
 	"encoding/json"

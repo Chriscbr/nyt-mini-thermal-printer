@@ -7,11 +7,13 @@ import (
 	"image/png"
 	"os"
 	"time"
+
+	mini "github.com/Chriscbr/nyt-mini-thermal-printer"
 )
 
 func main() {
 	if err := run(); err != nil {
-		fmt.Fprintln(os.Stderr, "nyt-mini-thermal-printer:", err)
+		fmt.Fprintln(os.Stderr, "nyt-mini:", err)
 		os.Exit(1)
 	}
 }
@@ -32,12 +34,12 @@ func run() error {
 		return fmt.Errorf("width must be at least 64 pixels")
 	}
 
-	puzzle, err := Fetch(day, *cookie)
+	puzzle, err := mini.Fetch(day, *cookie)
 	if err != nil {
 		return err
 	}
 
-	img := Render(puzzle, Options{Width: *width, Answers: *answers})
+	img := mini.Render(puzzle, mini.Options{Width: *width, Answers: *answers})
 
 	path := *out
 	if path == "" {

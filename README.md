@@ -2,19 +2,22 @@
 
 Renders the day's NYT Mini crossword as a 1-bit PNG that has been optimized for a thermal printer. It defaults to rendering to 384px wide by default for the "Cat Printer" which takes 58mm paper, but the output width can be customized for printers with higher DPIs.
 
-## Build
+## Install
 
 ```
-go build -o nyt-mini .
+go install github.com/Chriscbr/nyt-mini-thermal-printer/cmd/nyt-mini@latest
 ```
+
+The binary is named after its package directory, so `cmd/nyt-mini` is what
+makes the installed command `nyt-mini`.
 
 ## Usage
 
 ```
-./nyt-mini                      # today's mini -> nyt-mini-YYYY-MM-DD.png
-./nyt-mini -answers             # append the answer key
-./nyt-mini -width 576           # different printer width
-./nyt-mini -out - | your-printer-tool
+nyt-mini                      # today's mini -> nyt-mini-YYYY-MM-DD.png
+nyt-mini -answers             # append the answer key
+nyt-mini -width 576           # different printer width
+nyt-mini -out - | your-printer-tool
 ```
 
 | Flag | Default | Meaning |
@@ -38,7 +41,7 @@ through. Older dates are subscriber-only and always 403 without credentials —
 for those, pass your `NYT-S` cookie:
 
 ```
-NYT_S='...' ./nyt-mini -date 2026-08-01
+NYT_S='...' nyt-mini -date 2026-08-01
 ```
 
 Grab the value from DevTools → Application → Cookies on nytimes.com while

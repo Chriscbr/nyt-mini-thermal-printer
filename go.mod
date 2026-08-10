@@ -1,6 +1,6 @@
-module nyt-mini-thermal-printer
+module github.com/Chriscbr/nyt-mini-thermal-printer
 
-go 1.26.3
+go 1.25.0
 
 require golang.org/x/image v0.44.0
 
