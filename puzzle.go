@@ -7,15 +7,21 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 )
 
-const puzzleURL = "https://www.nytimes.com/svc/crosswords/v6/puzzle/mini/%s.json"
+// dates=1 trims the archive index the API otherwise bundles with every puzzle.
+const puzzleURL = "https://api.thewordfinder.com/crossword-solver/nyt-mini/%s?dates=1"
+
+// structureFrom is the earliest puzzle the API ships grid geometry for. Older
+// entries still carry clues and answers, but nothing that says where the
+// blocks go, so there is no grid to draw.
+const structureFrom = "2025-09-02"
 
 type Puzzle struct {
 	Date        time.Time
 	Constructor string
-	Copyright   string
 	Width       int
 	Height      int
 	Cells       []Cell
@@ -35,41 +41,50 @@ type Clue struct {
 }
 
 type apiResponse struct {
-	Body []struct {
+	PuzzleDate string  `json:"puzzle_date"`
+	Name       *string `json:"name"`
+	Simplified struct {
+		AcrossClues []apiClue `json:"acrossClues"`
+		DownClues   []apiClue `json:"downClues"`
+	} `json:"simplified"`
+	Structure struct {
+		Rows  int `json:"rows"`
+		Cols  int `json:"cols"`
 		Cells []struct {
-			Answer string `json:"answer"`
-			Label  string `json:"label"`
-			Type   int    `json:"type"`
+			Row      int    `json:"r"`
+			Col      int    `json:"c"`
+			Type     string `json:"type"`
+			Label    int    `json:"label"`
+			Solution string `json:"solution"`
 		} `json:"cells"`
-		ClueLists []struct {
-			Name  string `json:"name"`
-			Clues []int  `json:"clues"`
-		} `json:"clueLists"`
-		Clues []struct {
-			Direction string `json:"direction"`
-			Label     string `json:"label"`
-			Text      []struct {
-				Plain string `json:"plain"`
-			} `json:"text"`
-		} `json:"clues"`
-		Dimensions struct {
-			Height int `json:"height"`
-			Width  int `json:"width"`
-		} `json:"dimensions"`
-	} `json:"body"`
-	Constructors    []string `json:"constructors"`
-	Copyright       string   `json:"copyright"`
-	PublicationDate string   `json:"publicationDate"`
+	} `json:"structure"`
 }
 
-// NYT load-balances this endpoint across two backends and only one of them
-// serves anonymous callers, so an unauthenticated 403 is usually transient.
-const maxAttempts = 8
+type apiClue struct {
+	Number int    `json:"number"`
+	Clue   string `json:"clue"`
+	Answer string `json:"answer"`
+}
 
-func Fetch(date time.Time, cookie string) (*Puzzle, error) {
+func Fetch(date time.Time) (*Puzzle, error) {
 	day := date.Format("2006-01-02")
 	raw, err := cached(day, func() ([]byte, error) {
-		return get(fmt.Sprintf(puzzleURL, day), cookie, day)
+		raw, err := get(fmt.Sprintf(puzzleURL, day))
+		if err != nil {
+			return nil, err
+		}
+		// A date the API has no puzzle for still answers 200, with today's
+		// puzzle in the body. Catch that before it reaches the cache.
+		var probe struct {
+			PuzzleDate string `json:"puzzle_date"`
+		}
+		if err := json.Unmarshal(raw, &probe); err != nil {
+			return nil, fmt.Errorf("decoding puzzle: %w", err)
+		}
+		if probe.PuzzleDate != day {
+			return nil, fmt.Errorf("no mini puzzle published for %s (the API answered with %s instead)", day, probe.PuzzleDate)
+		}
+		return raw, nil
 	})
 	if err != nil {
 		return nil, err
@@ -79,63 +94,65 @@ func Fetch(date time.Time, cookie string) (*Puzzle, error) {
 	if err := json.Unmarshal(raw, &api); err != nil {
 		return nil, fmt.Errorf("decoding puzzle: %w", err)
 	}
-	if len(api.Body) == 0 {
-		return nil, fmt.Errorf("puzzle for %s has no body", day)
+	if len(api.Structure.Cells) == 0 {
+		return nil, fmt.Errorf("the API has no grid layout for %s; only puzzles from %s onward can be drawn", day, structureFrom)
 	}
-	body := api.Body[0]
 
 	p := &Puzzle{
-		Date:      date,
-		Copyright: api.Copyright,
-		Width:     body.Dimensions.Width,
-		Height:    body.Dimensions.Height,
+		Date:   date,
+		Width:  api.Structure.Cols,
+		Height: api.Structure.Rows,
+		Cells:  make([]Cell, api.Structure.Rows*api.Structure.Cols),
 	}
-	if len(api.Constructors) > 0 {
-		p.Constructor = api.Constructors[0]
-		for _, c := range api.Constructors[1:] {
-			p.Constructor += ", " + c
-		}
-	}
-	if t, err := time.Parse("2006-01-02", api.PublicationDate); err == nil {
+	if t, err := time.Parse("2006-01-02", api.PuzzleDate); err == nil {
 		p.Date = t
 	}
-
-	for _, c := range body.Cells {
-		p.Cells = append(p.Cells, Cell{Block: c.Type == 0, Label: c.Label, Answer: c.Answer})
+	if api.Name != nil {
+		p.Constructor = *api.Name
 	}
 
-	for _, list := range body.ClueLists {
-		var out []Clue
-		for _, i := range list.Clues {
-			if i < 0 || i >= len(body.Clues) {
-				continue
-			}
-			c := body.Clues[i]
-			text := ""
-			if len(c.Text) > 0 {
-				text = c.Text[0].Plain
-			}
-			out = append(out, Clue{Label: c.Label, Text: text})
+	for _, c := range api.Structure.Cells {
+		i := c.Row*p.Width + c.Col
+		if i < 0 || i >= len(p.Cells) {
+			continue
 		}
-		switch list.Name {
-		case "Across":
-			p.Across = out
-		case "Down":
-			p.Down = out
+		cell := Cell{Block: c.Type == "block", Answer: c.Solution}
+		if c.Label > 0 {
+			cell.Label = strconv.Itoa(c.Label)
 		}
+		p.Cells[i] = cell
 	}
+
+	p.Across = convert(api.Simplified.AcrossClues)
+	p.Down = convert(api.Simplified.DownClues)
 	return p, nil
 }
 
+func (p *Puzzle) At(row, col int) Cell {
+	i := row*p.Width + col
+	if i < 0 || i >= len(p.Cells) {
+		return Cell{Block: true}
+	}
+	return p.Cells[i]
+}
+
+func convert(in []apiClue) []Clue {
+	out := make([]Clue, 0, len(in))
+	for _, c := range in {
+		out = append(out, Clue{Label: strconv.Itoa(c.Number), Text: c.Clue})
+	}
+	return out
+}
+
 // cached memoizes a day's JSON on disk. A published puzzle never changes, so
-// re-rendering it at another width costs nothing and spares the flaky endpoint.
+// re-rendering it at another width costs nothing.
 func cached(day string, fetch func() ([]byte, error)) ([]byte, error) {
 	dir, err := os.UserCacheDir()
 	if err != nil {
 		return fetch()
 	}
 	dir = filepath.Join(dir, "nyt-mini-thermal-printer")
-	path := filepath.Join(dir, "mini-"+day+".json")
+	path := filepath.Join(dir, "wordfinder-"+day+".json")
 
 	if raw, err := os.ReadFile(path); err == nil {
 		return raw, nil
@@ -150,44 +167,22 @@ func cached(day string, fetch func() ([]byte, error)) ([]byte, error) {
 	return raw, nil
 }
 
-func get(url, cookie, day string) ([]byte, error) {
-	client := &http.Client{Timeout: 20 * time.Second}
-	for attempt := 1; ; attempt++ {
-		req, err := http.NewRequest(http.MethodGet, url, nil)
-		if err != nil {
-			return nil, err
-		}
-		req.Header.Set("User-Agent", "nyt-mini-thermal-printer/1.0")
-		if cookie != "" {
-			req.Header.Set("Cookie", "NYT-S="+cookie)
-		}
-
-		resp, err := client.Do(req)
-		if err != nil {
-			return nil, err
-		}
-		body, readErr := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
-		resp.Body.Close()
-
-		switch {
-		case resp.StatusCode == http.StatusOK:
-			return body, readErr
-		case resp.StatusCode == http.StatusNotFound:
-			return nil, fmt.Errorf("no mini puzzle published for %s", day)
-		case resp.StatusCode == http.StatusForbidden && attempt >= maxAttempts:
-			return nil, fmt.Errorf("nytimes.com refused %s after %d attempts; today's mini is free but older ones are not, so pass -cookie or set NYT_S to your NYT-S cookie value", day, attempt)
-		case resp.StatusCode == http.StatusForbidden:
-		default:
-			return nil, fmt.Errorf("nytimes.com returned %s for %s", resp.Status, day)
-		}
-		time.Sleep(time.Duration(attempt) * 400 * time.Millisecond)
+func get(url string) ([]byte, error) {
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
 	}
-}
+	req.Header.Set("User-Agent", "nyt-mini-thermal-printer/1.0")
+	req.Header.Set("Accept", "application/json")
 
-func (p *Puzzle) At(row, col int) Cell {
-	i := row*p.Width + col
-	if i < 0 || i >= len(p.Cells) {
-		return Cell{Block: true}
+	resp, err := (&http.Client{Timeout: 20 * time.Second}).Do(req)
+	if err != nil {
+		return nil, err
 	}
-	return p.Cells[i]
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("thewordfinder.com returned %s", resp.Status)
+	}
+	return io.ReadAll(io.LimitReader(resp.Body, 8<<20))
 }

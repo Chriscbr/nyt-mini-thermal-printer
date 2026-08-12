@@ -23,7 +23,6 @@ func run() error {
 	width := flag.Int("width", 384, "output width in pixels")
 	out := flag.String("out", "", "output PNG path, or - for stdout (default: nyt-mini-YYYY-MM-DD.png)")
 	answers := flag.Bool("answers", false, "append the answer key")
-	cookie := flag.String("cookie", os.Getenv("NYT_S"), "NYT-S cookie value, required for dates other than today (env NYT_S)")
 	flag.Parse()
 
 	day, err := resolveDate(*date)
@@ -34,7 +33,7 @@ func run() error {
 		return fmt.Errorf("width must be at least 64 pixels")
 	}
 
-	puzzle, err := mini.Fetch(day, *cookie)
+	puzzle, err := mini.Fetch(day)
 	if err != nil {
 		return err
 	}

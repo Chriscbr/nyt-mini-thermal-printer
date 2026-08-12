@@ -37,11 +37,11 @@ func Render(p *Puzzle, opt Options) image.Image {
 		c.img.Pix[i] = 0xff
 	}
 
-	title := face(serifBold, 38*s)
-	meta := face(serif, 17*s)
-	section := face(serifBold, 23*s)
-	clue := face(serif, 19*s)
-	clueBold := face(serifBold, 19*s)
+	title := face(serifBold, 46*s)
+	meta := face(serif, 20*s)
+	section := face(serifBold, 28*s)
+	clue := face(serif, 23*s)
+	clueBold := face(serifBold, 23*s)
 
 	c.y = c.pad
 	c.centeredTracked(title, "NYT MINI", round(4*s))
@@ -181,7 +181,7 @@ func (c *canvas) grid(p *Puzzle, maxWidth int, answers bool) {
 	oy := c.y
 
 	labels := face(serif, float64(cell)*0.31)
-	letters := face(serifBold, float64(cell)*0.68)
+	letters := face(serifBold, float64(cell)*0.72)
 
 	for row := 0; row < p.Height; row++ {
 		for col := 0; col < p.Width; col++ {

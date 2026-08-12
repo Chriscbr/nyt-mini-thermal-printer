@@ -2,5 +2,6 @@
 /nyt-mini
 /nyt-mini-thermal-printer
 
-# generated puzzle images
+# generated puzzle images, except the one the README embeds
 nyt-mini-????-??-??.png
+!nyt-mini-2026-08-10.png

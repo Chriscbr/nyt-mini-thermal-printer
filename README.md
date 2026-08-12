@@ -2,6 +2,16 @@
 
 Renders the day's NYT Mini crossword as a 1-bit PNG that has been optimized for a thermal printer. It defaults to rendering to 384px wide by default for the "Cat Printer" which takes 58mm paper, but the output width can be customized for printers with higher DPIs.
 
+<p align="center">
+  <img src="nyt-mini-2026-08-10.png"
+       alt="Rendered NYT Mini for August 10, 2026: the masthead, date, a 5x5 grid with numbered squares, the across and down clues, and an answer grid"
+       width="384">
+</p>
+
+<p align="center">
+  <em>Output of <code>nyt-mini -date 2026-08-10</code>.</em>
+</p>
+
 ## Install
 
 ```
@@ -26,26 +36,33 @@ nyt-mini -out - | your-printer-tool
 | `-width` | `384` | output width in pixels; everything scales from it |
 | `-out` | `nyt-mini-<date>.png` | output path, or `-` for stdout |
 | `-answers` | off | append a filled answer grid |
-| `-cookie` | `$NYT_S` | NYT-S cookie value |
 
 ## Development
 
-### About the NYT endpoint
+### About the puzzle endpoint
 
-Puzzles come from `https://www.nytimes.com/svc/crosswords/v6/puzzle/mini/<date>.json`.
-
-Today's mini is free, but NYT load-balances that endpoint across two backends
-and only one serves anonymous callers, so a plain request returns 403 much of
-the time. The tool retries up to 8 times with backoff, which reliably gets
-through. Older dates are subscriber-only and always 403 without credentials —
-for those, pass your `NYT-S` cookie:
+Puzzles come from thewordfinder.com's API:
 
 ```
-NYT_S='...' nyt-mini -date 2026-08-01
+https://api.thewordfinder.com/crossword-solver/nyt-mini/<date>?dates=1
 ```
 
-Grab the value from DevTools → Application → Cookies on nytimes.com while
-logged in (the base64-looking string, no `NYT-S=` prefix).
+It needs no credentials and serves the archive as readily as today, so `-date`
+works for any past puzzle. The response carries both the clue list and the grid
+geometry (which squares are blocks, their numbering, and the solution letters).
+`dates=1` trims an archive index the API otherwise bundles into every response.
+
+Two quirks worth knowing, both handled in `puzzle.go`:
+
+- **Grid geometry only goes back to 2025-09-02.** Older entries still have
+  clues and answers, but nothing saying where the blocks go, so there is no
+  grid to draw. Those dates fail with an explicit error.
+- **Unknown dates return HTTP 200 with today's puzzle**, rather than a 404. The
+  fetch compares `puzzle_date` against what was asked for and rejects a
+  mismatch before it can reach the cache.
+
+The API exposes no constructor name, so the byline the NYT feed used to supply
+is gone; the layout just omits it.
 
 Fetched JSON is cached under `~/Library/Caches/nyt-mini-thermal-printer` (or
 `$XDG_CACHE_HOME`), so re-rendering a day at a different width never re-hits the
